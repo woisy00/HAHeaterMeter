@@ -1,6 +1,5 @@
 {
   "name": "HeaterMeter",
-  "zip_release": true,
-  "filename": "heatermeter.zip",
+  "zip_release": false,
   "render_readme": true
 }
