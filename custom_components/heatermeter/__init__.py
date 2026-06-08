@@ -1,7 +1,7 @@
 """
 Support for reading HeaterMeter data. See https://github.com/CapnBry/HeaterMeter/wiki/Accessing-Raw-Data-Remotely
 
-configuration.yaml
+configuration.yaml (legacy – also supported via UI):
 
 heatermeter:
     api_key: api key from HeaterMeter API
@@ -10,130 +10,158 @@ heatermeter:
     scan_interval: 2
 """
 import logging
+
 import requests
 import homeassistant.helpers.config_validation as cv
 import voluptuous as vol
-from homeassistant.const import (
-        CONF_HOST, CONF_PORT, CONF_API_KEY, CONF_SCAN_INTERVAL
-    )
-from homeassistant.core import HomeAssistant
+from homeassistant import config_entries
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import CONF_API_KEY, CONF_HOST, CONF_PORT, CONF_SCAN_INTERVAL
+from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers.typing import ConfigType
-from homeassistant.helpers.discovery import load_platform
 
-DOMAIN = 'heatermeter'
+from .const import ALARM_DEFAULT, ALARM_NAME, DOMAIN, SET_URL_API, TEMPERATURE_DEFAULT, TEMPERATURE_NAME
 
-CONFIG_SCHEMA = vol.Schema({
-    DOMAIN: vol.Schema({
-        vol.Required(CONF_HOST): cv.string,
-        vol.Required(CONF_API_KEY): cv.string,
-        vol.Optional(CONF_PORT, default=80): cv.positive_int,
-        vol.Optional(CONF_SCAN_INTERVAL, default=10): cv.positive_int
-    })
-}, extra=vol.ALLOW_EXTRA)
-
-
-SET_URL_API = 'http://{0}:{1}/luci/lm/api/config'
-TEMPERATURE_NAME = 'temperature'
-TEMPERATURE_DEFAULT = '225'
-ALARM_NAME = 'alarms'
-ALARM_DEFAULT = '-190,-250,-1,-205,-100,-100,-100,-100'
 _LOGGER = logging.getLogger(__name__)
 
+PLATFORMS = ["sensor"]
 
-def setup(hass: HomeAssistant, config: ConfigType) -> bool:
-    """Set up is called when Home Assistant is loading our component."""
-    _LOGGER.debug("HeaterMeter init.py: config = %s", config[DOMAIN])
+CONFIG_SCHEMA = vol.Schema(
+    {
+        DOMAIN: vol.Schema(
+            {
+                vol.Required(CONF_HOST): cv.string,
+                vol.Required(CONF_API_KEY): cv.string,
+                vol.Optional(CONF_PORT, default=80): cv.positive_int,
+                vol.Optional(CONF_SCAN_INTERVAL, default=10): cv.positive_int,
+            }
+        )
+    },
+    extra=vol.ALLOW_EXTRA,
+)
 
-    hass.data[DOMAIN]                       = {}
-    hass.data[DOMAIN][CONF_HOST]            = config[DOMAIN][CONF_HOST]
-    hass.data[DOMAIN][CONF_PORT]            = config[DOMAIN][CONF_PORT]
-    hass.data[DOMAIN][CONF_API_KEY]         = config[DOMAIN][CONF_API_KEY]
-    hass.data[DOMAIN][CONF_SCAN_INTERVAL]   = config[DOMAIN][CONF_SCAN_INTERVAL]
 
-    _LOGGER.debug("HeaterMeter init.py: hass.data = %s", hass.data[DOMAIN])
+async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
+    """Import YAML configuration into a config entry."""
+    hass.data.setdefault(DOMAIN, {})
 
-    ### SetPoint
-    def handle_setpoint(temperature):
-        _LOGGER.debug("HeaterMeter handle_setpoint: temp = %s", temperature)
-
-    def handle_setpoint_api(call):
-        """Handle the service call."""
-        _LOGGER.debug("HeaterMeter init.py: calli = %s", call)
- 
-        temp = call.data.get(TEMPERATURE_NAME, TEMPERATURE_DEFAULT)
-        _LOGGER.debug("HeaterMeter init.py: temp = %s", temp)
-
-        #SET_URL_API = 'http://{0}:{1}/luci/lm/api/config'
-        try:
-            data = {'sp':temp, 'apikey':hass.data[DOMAIN][CONF_API_KEY]}
-        
-            _LOGGER.debug("HeaterMeter handle_setpoint: data = %s", data)
-
-            url = SET_URL_API.format(
-                    hass.data[DOMAIN][CONF_HOST], hass.data[DOMAIN][CONF_PORT]
+    if DOMAIN in config:
+        _LOGGER.debug("HeaterMeter: importing YAML config into config entry")
+        hass.async_create_task(
+            hass.config_entries.flow.async_init(
+                DOMAIN,
+                context={"source": config_entries.SOURCE_IMPORT},
+                data=dict(config[DOMAIN]),
             )
-            _LOGGER.debug("HeaterMeter handle_setpoint: ADMIN_URL = %s", url)
-            
-            r = requests.post(url, data = data)
-            if r.status_code == 200:
-                _LOGGER.info("HeaterMeter handle_setpoint Setpoint updated: %s" % (temp))
-                _LOGGER.debug("HeaterMeter handle_setpoint Status: %s" % (r.text))
-                _LOGGER.debug("HeaterMeter handle_setpoint headers: %s" % (r.headers))
-            elif r.status_code == 404:
-                _LOGGER.debug("HeaterMeter handle_setpoint_api wrong API version, reverting to old setpoint api")
-                handle_setpoint(temp)
-            elif r.status_code == 403:
-                _LOGGER.debug("HeaterMeter handle_setpoint_api User has explicitly disabled external API")
-            else:
-                _LOGGER.debug("HeaterMeter handle_setpoint_api unknown http reply %s", temp)
+        )
 
-        except requests.exceptions.RequestException as e:  # This is the correct syntax
-            _LOGGER.error("HeaterMeter handle_setpoint Post Connection error %s" % (r.status_code))
-
-    hass.services.register(DOMAIN, 'set_temperature', handle_setpoint_api)
-
-    ### Set Alarms
-    def handle_setalarms(alarms):
-        _LOGGER.debug("HeaterMeter handle_setalarms: alrm = %s", alarms)
-
-    def handle_setalarms_api(call):
-        """Handle the service call."""
-        _LOGGER.debug("HeaterMeter init.py: calli = %s", call)
- 
-        alrm = call.data.get(ALARM_NAME, ALARM_DEFAULT)
-        _LOGGER.debug("HeaterMeter init.py: alarms = %s", alrm)
-
-        #SET_URL_API = 'http://{0}:{1}/luci/lm/api/config'
-        try:
-            data = {'al':alrm, 'apikey':hass.data[DOMAIN][CONF_API_KEY]}
-        
-            _LOGGER.debug("HeaterMeter handle_setalarms: data = %s", data)
-
-            url = SET_URL_API.format(
-                    hass.data[DOMAIN][CONF_HOST], hass.data[DOMAIN][CONF_PORT]
-            )
-            _LOGGER.debug("HeaterMeter handle_setalarms: ADMIN_URL = %s", url)
-            
-            r = requests.post(url, data = data)
-            if r.status_code == 200:
-                _LOGGER.info("HeaterMeter handle_setalarms Alarms updated: %s" % (alrm))
-                _LOGGER.debug("HeaterMeter handle_setalarms Status: %s" % (r.text))
-                _LOGGER.debug("HeaterMeter handle_setalarms headers: %s" % (r.headers))
-            elif r.status_code == 404:
-                _LOGGER.debug("HeaterMeter handle_setalarms_api wrong API version, reverting to old api")
-                handle_setpoint(alrm)
-            elif r.status_code == 403:
-                _LOGGER.debug("HeaterMeter handle_setalarms_api User has explicitly disabled external API")
-            else:
-                _LOGGER.debug("HeaterMeter handle_setalarms_api unknown http reply %s", alrm)
-
-        except requests.exceptions.RequestException as e:  # This is the correct syntax
-            _LOGGER.error("HeaterMeter handle_setalarms Post Connection error %s" % (r.status_code))
-
-    hass.services.register(DOMAIN, 'set_alarms', handle_setalarms_api)
-
-
-    load_platform(hass, 'sensor', DOMAIN, {}, config)
-
-    # Return boolean to indicate that initialization was successfully.
     return True
+
+
+async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Set up HeaterMeter from a config entry (UI or YAML import)."""
+    hass.data.setdefault(DOMAIN, {})
+
+    # Merge entry data with any options (options override data for api_key / scan_interval)
+    conf = {**entry.data, **entry.options}
+
+    hass.data[DOMAIN][entry.entry_id] = {
+        CONF_HOST: conf[CONF_HOST],
+        CONF_PORT: conf.get(CONF_PORT, 80),
+        CONF_API_KEY: conf[CONF_API_KEY],
+        CONF_SCAN_INTERVAL: conf.get(CONF_SCAN_INTERVAL, 10),
+    }
+
+    _LOGGER.debug("HeaterMeter async_setup_entry: data = %s", hass.data[DOMAIN][entry.entry_id])
+
+    # ── Register services (only once for all entries) ──────────────────────
+
+    if not hass.services.has_service(DOMAIN, "set_temperature"):
+
+        def handle_setpoint_api(call: ServiceCall) -> None:
+            """Set the smoker temperature setpoint."""
+            _LOGGER.debug("HeaterMeter handle_setpoint_api: call = %s", call)
+            temp = call.data.get(TEMPERATURE_NAME, TEMPERATURE_DEFAULT)
+            entry_id = _resolve_entry_id(hass, call)
+            cfg = hass.data[DOMAIN].get(entry_id, {})
+            if not cfg:
+                _LOGGER.error("HeaterMeter: no config entry found for set_temperature")
+                return
+            _post_config(hass, cfg, {"sp": temp}, "set_temperature")
+
+        hass.services.register(DOMAIN, "set_temperature", handle_setpoint_api)
+
+    if not hass.services.has_service(DOMAIN, "set_alarms"):
+
+        def handle_setalarms_api(call: ServiceCall) -> None:
+            """Set the smoker alarms."""
+            _LOGGER.debug("HeaterMeter handle_setalarms_api: call = %s", call)
+            alrm = call.data.get(ALARM_NAME, ALARM_DEFAULT)
+            entry_id = _resolve_entry_id(hass, call)
+            cfg = hass.data[DOMAIN].get(entry_id, {})
+            if not cfg:
+                _LOGGER.error("HeaterMeter: no config entry found for set_alarms")
+                return
+            _post_config(hass, cfg, {"al": alrm}, "set_alarms")
+
+        hass.services.register(DOMAIN, "set_alarms", handle_setalarms_api)
+
+    # Forward to sensor platform
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+    # Re-load when options change
+    entry.async_on_unload(entry.add_update_listener(_async_update_listener))
+
+    return True
+
+
+async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Unload a config entry."""
+    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+
+    if unload_ok:
+        hass.data[DOMAIN].pop(entry.entry_id, None)
+
+        # Remove services when no entries remain
+        if not hass.data[DOMAIN]:
+            hass.services.remove(DOMAIN, "set_temperature")
+            hass.services.remove(DOMAIN, "set_alarms")
+
+    return unload_ok
+
+
+async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Reload entry when options are updated."""
+    await hass.config_entries.async_reload(entry.entry_id)
+
+
+# ── Helpers ────────────────────────────────────────────────────────────────
+
+def _resolve_entry_id(hass: HomeAssistant, call: ServiceCall) -> str | None:
+    """Return the entry_id to use for a service call.
+
+    Uses the first available entry (most setups only have one HeaterMeter).
+    """
+    for eid in hass.data.get(DOMAIN, {}):
+        return eid
+    return None
+
+
+def _post_config(hass: HomeAssistant, cfg: dict, payload: dict, service: str) -> None:
+    """POST a config change to the HeaterMeter API."""
+    try:
+        data = {**payload, "apikey": cfg[CONF_API_KEY]}
+        url = SET_URL_API.format(cfg[CONF_HOST], cfg[CONF_PORT])
+        _LOGGER.debug("HeaterMeter %s: POST %s  data=%s", service, url, data)
+
+        r = requests.post(url, data=data, timeout=10)
+        if r.status_code == 200:
+            _LOGGER.info("HeaterMeter %s: success – %s", service, payload)
+        elif r.status_code == 404:
+            _LOGGER.warning("HeaterMeter %s: wrong API version (404)", service)
+        elif r.status_code == 403:
+            _LOGGER.warning("HeaterMeter %s: external API disabled (403)", service)
+        else:
+            _LOGGER.warning("HeaterMeter %s: unexpected HTTP %s", service, r.status_code)
+    except requests.exceptions.RequestException as exc:
+        _LOGGER.error("HeaterMeter %s: connection error – %s", service, exc)

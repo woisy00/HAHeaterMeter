@@ -1,0 +1,34 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "HeaterMeter BBQ Controller",
+        "description": "Connect to your HeaterMeter device.",
+        "data": {
+          "host": "Host / IP address",
+          "api_key": "API Key",
+          "port": "Port",
+          "scan_interval": "Scan interval (seconds)"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Unable to connect to the HeaterMeter. Check host and port."
+    },
+    "abort": {
+      "already_configured": "This HeaterMeter device is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "HeaterMeter Options",
+        "data": {
+          "api_key": "API Key",
+          "scan_interval": "Scan interval (seconds)"
+        }
+      }
+    }
+  }
+}
+

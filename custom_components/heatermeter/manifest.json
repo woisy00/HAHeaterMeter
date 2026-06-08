@@ -5,10 +5,11 @@
   "dependencies": [],
   "codeowners": [],
   "requirements": [],
-  "version": "2025.05.01",
+  "version": "2025.06.01",
+  "config_flow": true,
   "zeroconf": [
     {"type":"_http._tcp.local.","name":"HeaterMeter BBQ Controller*"}
-   ],
-   "integration_type": "device",
-   "iot_class": "local_polling"
+  ],
+  "integration_type": "device",
+  "iot_class": "local_polling"
 }

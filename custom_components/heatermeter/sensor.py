@@ -1,230 +1,244 @@
 """
 Support for reading HeaterMeter data. See https://github.com/CapnBry/HeaterMeter/wiki/Accessing-Raw-Data-Remotely
-
 """
 import logging
 import requests
-import json
 from datetime import timedelta
-import homeassistant.util.dt as dt_util
-import voluptuous as vol
 
-from homeassistant.helpers.config_validation import (
-    PLATFORM_SCHEMA, PLATFORM_SCHEMA_BASE)
-import homeassistant.helpers.config_validation as cv
-from homeassistant.const import (
-        CONF_HOST, CONF_PORT, CONF_API_KEY, CONF_SCAN_INTERVAL, CONF_RESOURCES
-    )
-from homeassistant.util import Throttle
+import homeassistant.util.dt as dt_util
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import CONF_HOST, CONF_PORT, CONF_SCAN_INTERVAL
+from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import Entity
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.util import Throttle
 from homeassistant.util.unit_system import US_CUSTOMARY_SYSTEM
-from . import DOMAIN
 from homeassistant.const import UnitOfTemperature
+
+from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
-ENTITY_ID_FORMAT = DOMAIN + '.{}'
-
-BASE_URL = 'http://{0}:{1}{2}'
+ENTITY_ID_FORMAT = DOMAIN + ".{}"
+BASE_URL = "http://{0}:{1}{2}"
 SCAN_INTERVAL = timedelta(seconds=2)
 MIN_TIME_BETWEEN_UPDATES = timedelta(seconds=1)
 
 SENSOR_TYPES = {
-    'setpoint': ['Setpoint', '', 'mdi:thermometer'],
-    'lid': ['Lid', '', 'mdi:room-service'],
-    'fan': ['Fan', '%', 'mdi:fan'],
-    'alarm': ['Alarm', '', 'mdi:alert'],
-    'probe0_temperature': ['Pit Temperature', '', 'mdi:thermometer'],
-    'probe0_hi': ['Pit High', '', 'mdi:thermometer'],
-    'probe0_lo': ['Pit Low', '', 'mdi:thermometer'],
-    'probe1_temperature': ['Probe1 Temperature', '', 'mdi:thermometer'],
-    'probe1_hi': ['Probe1 High', '', 'mdi:thermometer'],
-    'probe1_lo': ['Probe1 Low', '', 'mdi:thermometer'],
-    'probe2_temperature': ['Probe2 Temperature', '', 'mdi:thermometer'],
-    'probe2_hi': ['Probe2 High', '', 'mdi:thermometer'],
-    'probe2_lo': ['Probe2 Low', '', 'mdi:thermometer'],
-    'probe3_temperature': ['Probe3 Temperature', '', 'mdi:thermometer'],
-    'probe3_hi': ['Probe3 High', '', 'mdi:thermometer'],
-    'probe3_lo': ['Probe3 Low', '', 'mdi:thermometer']
+    "setpoint": ["Setpoint", "", "mdi:thermometer"],
+    "lid": ["Lid", "", "mdi:room-service"],
+    "fan": ["Fan", "%", "mdi:fan"],
+    "alarm": ["Alarm", "", "mdi:alert"],
+    "probe0_temperature": ["Pit Temperature", "", "mdi:thermometer"],
+    "probe0_hi": ["Pit High", "", "mdi:thermometer"],
+    "probe0_lo": ["Pit Low", "", "mdi:thermometer"],
+    "probe1_temperature": ["Probe1 Temperature", "", "mdi:thermometer"],
+    "probe1_hi": ["Probe1 High", "", "mdi:thermometer"],
+    "probe1_lo": ["Probe1 Low", "", "mdi:thermometer"],
+    "probe2_temperature": ["Probe2 Temperature", "", "mdi:thermometer"],
+    "probe2_hi": ["Probe2 High", "", "mdi:thermometer"],
+    "probe2_lo": ["Probe2 Low", "", "mdi:thermometer"],
+    "probe3_temperature": ["Probe3 Temperature", "", "mdi:thermometer"],
+    "probe3_hi": ["Probe3 High", "", "mdi:thermometer"],
+    "probe3_lo": ["Probe3 Low", "", "mdi:thermometer"],
 }
 
-def setup_platform(hass, config, add_entities, discovery_info=None):
-    """Setup the HeaterMeter sensors."""
 
-    _LOGGER.debug("HeaterMeter: config = %s", config)
-    _LOGGER.debug("HeaterMeter: hass.data = %s", hass.data[DOMAIN])
-    _LOGGER.debug("HeaterMeter: hass = %s", hass)
-    _LOGGER.debug("HeaterMeter: discovery_info = %s", discovery_info)
-       
-    host = hass.data[DOMAIN][CONF_HOST]
-    port = hass.data[DOMAIN][CONF_PORT]
-
-    # Default to metric
-    TEMP_UNITS = UnitOfTemperature.CELSIUS
-
+def _get_temp_units(hass: HomeAssistant) -> str:
     if hass.config.units is US_CUSTOMARY_SYSTEM:
-        TEMP_UNITS = UnitOfTemperature.FAHRENHEIT
+        return UnitOfTemperature.FAHRENHEIT
+    return UnitOfTemperature.CELSIUS
 
-    # Set Temperature Units based on global system settings
-    SENSOR_TYPES['setpoint'][1]             = TEMP_UNITS
-    SENSOR_TYPES['probe0_temperature'][1]   = TEMP_UNITS
-    SENSOR_TYPES['probe0_hi'][1]            = TEMP_UNITS
-    SENSOR_TYPES['probe0_lo'][1]            = TEMP_UNITS
-    SENSOR_TYPES['probe1_temperature'][1]   = TEMP_UNITS
-    SENSOR_TYPES['probe1_hi'][1]            = TEMP_UNITS
-    SENSOR_TYPES['probe1_lo'][1]            = TEMP_UNITS
-    SENSOR_TYPES['probe2_temperature'][1]   = TEMP_UNITS
-    SENSOR_TYPES['probe2_hi'][1]            = TEMP_UNITS
-    SENSOR_TYPES['probe2_lo'][1]            = TEMP_UNITS
-    SENSOR_TYPES['probe3_temperature'][1]   = TEMP_UNITS
-    SENSOR_TYPES['probe3_hi'][1]            = TEMP_UNITS
-    SENSOR_TYPES['probe3_lo'][1]            = TEMP_UNITS
+
+def _apply_temp_units(temp_unit: str) -> None:
+    for key in (
+        "setpoint",
+        "probe0_temperature", "probe0_hi", "probe0_lo",
+        "probe1_temperature", "probe1_hi", "probe1_lo",
+        "probe2_temperature", "probe2_hi", "probe2_lo",
+        "probe3_temperature", "probe3_hi", "probe3_lo",
+    ):
+        SENSOR_TYPES[key][1] = temp_unit
+
+
+# ── Config-entry setup (UI / YAML-import) ─────────────────────────────────
+
+async def async_setup_entry(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    async_add_entities: AddEntitiesCallback,
+) -> None:
+    """Set up HeaterMeter sensors from a config entry."""
+    cfg = hass.data[DOMAIN][entry.entry_id]
+    host = cfg[CONF_HOST]
+    port = cfg[CONF_PORT]
+
+    _apply_temp_units(_get_temp_units(hass))
+
+    data_obj = HeaterMeterData(host, port)
+
+    entities = [
+        HeaterMeterSensor(data_obj, sensor_type, host, entry.entry_id)
+        for sensor_type in SENSOR_TYPES
+    ]
+
+    _LOGGER.debug("HeaterMeter async_setup_entry: %d entities created", len(entities))
+    async_add_entities(entities, update_before_add=True)
+
+
+# ── Legacy YAML setup_platform (kept for backward compat) ─────────────────
+
+def setup_platform(hass, config, add_entities, discovery_info=None):
+    """Legacy platform setup – only used when loaded directly via YAML."""
+    _LOGGER.debug("HeaterMeter setup_platform: hass.data = %s", hass.data.get(DOMAIN))
+
+    # When loaded via async_setup_entry the platform is already set up; bail out.
+    if not hass.data.get(DOMAIN):
+        _LOGGER.warning("HeaterMeter setup_platform called but no data found – skipping")
+        return
+
+    host = next(iter(hass.data[DOMAIN].values()))[CONF_HOST]
+    port = next(iter(hass.data[DOMAIN].values()))[CONF_PORT]
+    entry_id = next(iter(hass.data[DOMAIN]))
+
+    _apply_temp_units(_get_temp_units(hass))
 
     try:
-        data = HeaterMeterData(host, port)
-    except RunTimeError:
-        _LOGGER.error("HeaterMeter: Unable to connect fetch data from HeaterMeter %s:%s",
-                      host, port)
+        data_obj = HeaterMeterData(host, port)
+    except RuntimeError:
+        _LOGGER.error("HeaterMeter: unable to fetch data from %s:%s", host, port)
         return False
 
-    entities = []
-
-    for resource in SENSOR_TYPES:
-        sensor_type = resource.lower()
-        entities.append(HeaterMeterSensor(data, sensor_type))
-    
-    _LOGGER.debug("HeaterMeter: entities = %s", entities)
+    entities = [
+        HeaterMeterSensor(data_obj, sensor_type, host, entry_id)
+        for sensor_type in SENSOR_TYPES
+    ]
     add_entities(entities)
 
 
-# pylint: disable=abstract-method
-class HeaterMeterData(object):
-    """Representation of a HeaterMeter."""
+# ── Data class ────────────────────────────────────────────────────────────
 
-    def __init__(self, host, port):
-        """Initialize the HeaterMeter."""
+class HeaterMeterData:
+    """Representation of a HeaterMeter data source."""
+
+    def __init__(self, host: str, port: int) -> None:
         self._host = host
         self._port = port
         self.data = None
         self._backoff = dt_util.utcnow()
 
     @Throttle(MIN_TIME_BETWEEN_UPDATES)
-    def update(self):
-        """Update the data from the HeaterMeter."""
-
-        _LOGGER.debug("HeaterMeter: Backoff = %i", self._backoff - dt_util.utcnow())
+    def update(self) -> None:
         if self._backoff > dt_util.utcnow():
+            _LOGGER.debug("HeaterMeter: in backoff, skipping update")
             return
 
-        dataurl = BASE_URL.format(
-                    self._host, self._port,
-                    '/luci/lm/hmstatus'
-        )   #new API /luci/lm/api/status
+        url = BASE_URL.format(self._host, self._port, "/luci/lm/hmstatus")
         try:
-            response = requests.get(dataurl, timeout=5)
+            response = requests.get(url, timeout=5)
             self.data = response.json()
         except requests.exceptions.ConnectionError:
-            _LOGGER.debug("HeaterMeter: No route to device %s", dataurl)
+            _LOGGER.debug("HeaterMeter: no route to device %s", url)
             self.data = None
             self._backoff = dt_util.utcnow() + timedelta(seconds=60)
-            
-        _LOGGER.debug("HeaterMeter: Data = %s", self.data)
 
+        _LOGGER.debug("HeaterMeter: data = %s", self.data)
+
+
+# ── Sensor entity ─────────────────────────────────────────────────────────
 
 class HeaterMeterSensor(Entity):
-    """Representation of a HeaterMeter sensor from the HeaterMeter."""
+    """A single HeaterMeter sensor."""
 
-    def __init__(self, data, sensor_type):
-        """Initialize the sensor."""
+    def __init__(
+        self,
+        data: HeaterMeterData,
+        sensor_type: str,
+        host: str,
+        entry_id: str,
+    ) -> None:
         self.data = data
         self.type = sensor_type
+        self._host = host
+        self._entry_id = entry_id
         self.entity_id = ENTITY_ID_FORMAT.format(sensor_type)
         self._name = SENSOR_TYPES[self.type][0]
         self._unit_of_measurement = SENSOR_TYPES[self.type][1]
         self._icon = SENSOR_TYPES[self.type][2]
         self._state = None
-        self.update()
+
+    # ── HA metadata ───────────────────────────────────────────────────────
 
     @property
-    def name(self):
-        """Return the name of the sensor."""
+    def unique_id(self) -> str:
+        return f"{self._entry_id}_{self.type}"
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return DeviceInfo(
+            identifiers={(DOMAIN, self._host)},
+            name=f"HeaterMeter ({self._host})",
+            manufacturer="CapnBry",
+            model="HeaterMeter BBQ Controller",
+            configuration_url=f"http://{self._host}",
+        )
+
+    @property
+    def name(self) -> str:
         return self._name
 
     @property
-    def icon(self):
-        """Icon to use in the frontend, if any."""
+    def icon(self) -> str:
         return self._icon
 
     @property
     def state(self):
-        """Return the state of the sensor."""
         return self._state
 
     @property
-    def unit_of_measurement(self):
-        """Return the unit of measurement of this entity, if any."""
+    def unit_of_measurement(self) -> str:
         return self._unit_of_measurement
 
-    def update(self):
-        """Get the latest data and use it to update our sensor state."""
+    # ── Update ────────────────────────────────────────────────────────────
+
+    def update(self) -> None:
         self.data.update()
 
-        if self.data.data == None:
+        if self.data.data is None:
             self._state = "Unknown"
+            return
+
+        d = self.data.data
+
+        if self.type == "setpoint":
+            self._state = d["set"]
+        elif self.type == "fan":
+            self._state = d["fan"]["c"]
+        elif self.type == "lid":
+            self._state = "Open" if d["lid"] != 0 else "Closed"
+        elif self.type == "alarm":
+            self._state = (
+                "on"
+                if any(
+                    d["temps"][i]["a"]["r"] is not None for i in range(4)
+                )
+                else "off"
+            )
         else:
-            if self.type == 'setpoint':
-                self._state = self.data.data["set"]
-            if self.type == 'fan':
-                self._state = self.data.data["fan"]["c"]
-            if self.type == 'lid':
-                if self.data.data["lid"] == 0:
-                    self._state =  "Closed"
-                else:
-                    self._state =  "Open"
-            if self.type == 'alarm':
-                if self.data.data["temps"][0]["a"]["r"] is not None:
-                    self._state = "on"
-                elif self.data.data["temps"][1]["a"]["r"] is not None:
-                    self._state = "on"
-                elif self.data.data["temps"][2]["a"]["r"] is not None:
-                    self._state = "on"
-                elif self.data.data["temps"][3]["a"]["r"] is not None:
-                    self._state = "on"
-                else:
-                    self._state = "off"
-            if self.type == 'probe0_temperature':
-                self._state = self.data.data["temps"][0]["c"]
-                self._name = self.data.data["temps"][0]["n"]
-            if self.type == 'probe0_hi':
-                self._state = self.data.data["temps"][0]["a"]["h"]
-                self._name = self.data.data["temps"][0]["n"] + " Alarm: High"
-            if self.type == 'probe0_lo':
-                self._state = self.data.data["temps"][0]["a"]["l"]
-                self._name = self.data.data["temps"][0]["n"] + " Alarm: Low"
-            if self.type == 'probe1_temperature':
-                self._state = self.data.data["temps"][1]["c"]
-                self._name = self.data.data["temps"][1]["n"]
-            if self.type == 'probe1_hi':
-                self._state = self.data.data["temps"][1]["a"]["h"]
-                self._name = self.data.data["temps"][1]["n"] + " Alarm: High"
-            if self.type == 'probe1_lo':
-                self._state = self.data.data["temps"][1]["a"]["l"]
-                self._name = self.data.data["temps"][1]["n"] + " Alarm: Low"
-            if self.type == 'probe2_temperature':
-                self._state = self.data.data["temps"][2]["c"]
-                self._name = self.data.data["temps"][2]["n"]
-            if self.type == 'probe2_hi':
-                self._state = self.data.data["temps"][2]["a"]["h"]
-                self._name = self.data.data["temps"][2]["n"] + " Alarm: High"
-            if self.type == 'probe2_lo':
-                self._state = self.data.data["temps"][2]["a"]["l"]
-                self._name = self.data.data["temps"][2]["n"] + " Alarm: Low"
-            if self.type == 'probe3_temperature':
-                self._state = self.data.data["temps"][3]["c"]
-                self._name = self.data.data["temps"][3]["n"]
-            if self.type == 'probe3_hi':
-                self._state = self.data.data["temps"][3]["a"]["h"]
-                self._name = self.data.data["temps"][3]["n"] + " Alarm: High"
-            if self.type == 'probe3_lo':
-                self._state = self.data.data["temps"][3]["a"]["l"]
-                self._name = self.data.data["temps"][3]["n"] + " Alarm: Low"
+            # probe{n}_{temperature|hi|lo}
+            parts = self.type.rsplit("_", 1)
+            probe_key = parts[0]  # e.g. "probe0"
+            measure = parts[1]    # "temperature", "hi", or "lo"
+            idx = int(probe_key.replace("probe", ""))
+
+            probe_name = d["temps"][idx]["n"]
+            if measure == "temperature":
+                self._state = d["temps"][idx]["c"]
+                self._name = probe_name
+            elif measure == "hi":
+                self._state = d["temps"][idx]["a"]["h"]
+                self._name = f"{probe_name} Alarm: High"
+            elif measure == "lo":
+                self._state = d["temps"][idx]["a"]["l"]
+                self._name = f"{probe_name} Alarm: Low"
