@@ -78,7 +78,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     if not hass.services.has_service(DOMAIN, "set_temperature"):
 
-        def handle_setpoint_api(call: ServiceCall) -> None:
+        async def handle_setpoint_api(call: ServiceCall) -> None:
             """Set the smoker temperature setpoint."""
             _LOGGER.debug("HeaterMeter handle_setpoint_api: call = %s", call)
             temp = call.data.get(TEMPERATURE_NAME, TEMPERATURE_DEFAULT)
@@ -87,13 +87,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             if not cfg:
                 _LOGGER.error("HeaterMeter: no config entry found for set_temperature")
                 return
-            _post_config(hass, cfg, {"sp": temp}, "set_temperature")
+            await hass.async_add_executor_job(
+                _post_config, hass, cfg, {"sp": temp}, "set_temperature"
+            )
 
-        hass.services.register(DOMAIN, "set_temperature", handle_setpoint_api)
+        hass.services.async_register(DOMAIN, "set_temperature", handle_setpoint_api)
 
     if not hass.services.has_service(DOMAIN, "set_alarms"):
 
-        def handle_setalarms_api(call: ServiceCall) -> None:
+        async def handle_setalarms_api(call: ServiceCall) -> None:
             """Set the smoker alarms."""
             _LOGGER.debug("HeaterMeter handle_setalarms_api: call = %s", call)
             alrm = call.data.get(ALARM_NAME, ALARM_DEFAULT)
@@ -102,9 +104,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             if not cfg:
                 _LOGGER.error("HeaterMeter: no config entry found for set_alarms")
                 return
-            _post_config(hass, cfg, {"al": alrm}, "set_alarms")
+            await hass.async_add_executor_job(
+                _post_config, hass, cfg, {"al": alrm}, "set_alarms"
+            )
 
-        hass.services.register(DOMAIN, "set_alarms", handle_setalarms_api)
+        hass.services.async_register(DOMAIN, "set_alarms", handle_setalarms_api)
 
     # Forward to sensor platform
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -124,8 +128,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         # Remove services when no entries remain
         if not hass.data[DOMAIN]:
-            hass.services.remove(DOMAIN, "set_temperature")
-            hass.services.remove(DOMAIN, "set_alarms")
+            hass.services.async_remove(DOMAIN, "set_temperature")
+            hass.services.async_remove(DOMAIN, "set_alarms")
 
     return unload_ok
 
