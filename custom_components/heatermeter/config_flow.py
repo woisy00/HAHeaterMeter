@@ -5,7 +5,13 @@ import requests
 import voluptuous as vol
 
 from homeassistant import config_entries
-from homeassistant.const import CONF_API_KEY, CONF_HOST, CONF_PORT, CONF_SCAN_INTERVAL
+from homeassistant.const import (
+    CONF_API_KEY,
+    CONF_HOST,
+    CONF_NAME,
+    CONF_PORT,
+    CONF_SCAN_INTERVAL,
+)
 from homeassistant.core import callback
 
 from .const import DOMAIN
@@ -33,6 +39,7 @@ def _build_schema(defaults: dict | None = None) -> vol.Schema:
         {
             vol.Required(CONF_HOST, default=defaults.get(CONF_HOST, "smoker.lan")): str,
             vol.Required(CONF_API_KEY, default=defaults.get(CONF_API_KEY, "")): str,
+            vol.Optional(CONF_NAME, default=defaults.get(CONF_NAME, "")): str,
             vol.Optional(CONF_PORT, default=defaults.get(CONF_PORT, 80)): int,
             vol.Optional(
                 CONF_SCAN_INTERVAL, default=defaults.get(CONF_SCAN_INTERVAL, 10)
@@ -53,6 +60,8 @@ class HeaterMeterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             host = user_input[CONF_HOST]
             port = user_input[CONF_PORT]
+            name = user_input.get(CONF_NAME, "").strip() or host
+            entry_data = {**user_input, CONF_NAME: name}
 
             # Avoid duplicate entries for the same host
             await self.async_set_unique_id(f"{host}:{port}")
@@ -65,8 +74,8 @@ class HeaterMeterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors["base"] = "cannot_connect"
             else:
                 return self.async_create_entry(
-                    title=f"HeaterMeter ({host})",
-                    data=user_input,
+                    title=f"HeaterMeter ({name})",
+                    data=entry_data,
                 )
 
         return self.async_show_form(
@@ -79,13 +88,15 @@ class HeaterMeterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Handle import from YAML configuration."""
         host = import_data.get(CONF_HOST, "")
         port = import_data.get(CONF_PORT, 80)
+        name = import_data.get(CONF_NAME, "").strip() or host
+        entry_data = {**import_data, CONF_NAME: name}
 
         await self.async_set_unique_id(f"{host}:{port}")
         self._abort_if_unique_id_configured()
 
         return self.async_create_entry(
-            title=f"HeaterMeter ({host})",
-            data=import_data,
+            title=f"HeaterMeter ({name})",
+            data=entry_data,
         )
 
     @staticmethod

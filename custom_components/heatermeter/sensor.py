@@ -7,12 +7,12 @@ from datetime import timedelta
 
 import homeassistant.util.dt as dt_util
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_HOST, CONF_PORT, CONF_SCAN_INTERVAL
+from homeassistant.const import CONF_HOST, CONF_NAME, CONF_PORT, CONF_SCAN_INTERVAL
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import Entity
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.device_registry import DeviceInfo
-from homeassistant.util import Throttle
+from homeassistant.util import Throttle, slugify
 from homeassistant.util.unit_system import US_CUSTOMARY_SYSTEM
 from homeassistant.const import UnitOfTemperature
 
@@ -20,7 +20,7 @@ from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
-ENTITY_ID_FORMAT = DOMAIN + ".{}"
+ENTITY_ID_FORMAT = "sensor.{}"
 BASE_URL = "http://{0}:{1}{2}"
 SCAN_INTERVAL = timedelta(seconds=2)
 MIN_TIME_BETWEEN_UPDATES = timedelta(seconds=1)
@@ -73,13 +73,14 @@ async def async_setup_entry(
     cfg = hass.data[DOMAIN][entry.entry_id]
     host = cfg[CONF_HOST]
     port = cfg[CONF_PORT]
+    name = cfg.get(CONF_NAME, host)
 
     _apply_temp_units(_get_temp_units(hass))
 
     data_obj = HeaterMeterData(host, port)
 
     entities = [
-        HeaterMeterSensor(data_obj, sensor_type, host, entry.entry_id)
+        HeaterMeterSensor(data_obj, sensor_type, host, name, entry.entry_id)
         for sensor_type in SENSOR_TYPES
     ]
 
@@ -98,8 +99,10 @@ def setup_platform(hass, config, add_entities, discovery_info=None):
         _LOGGER.warning("HeaterMeter setup_platform called but no data found – skipping")
         return
 
-    host = next(iter(hass.data[DOMAIN].values()))[CONF_HOST]
-    port = next(iter(hass.data[DOMAIN].values()))[CONF_PORT]
+    config_data = next(iter(hass.data[DOMAIN].values()))
+    host = config_data[CONF_HOST]
+    port = config_data[CONF_PORT]
+    name = config_data.get(CONF_NAME, host)
     entry_id = next(iter(hass.data[DOMAIN]))
 
     _apply_temp_units(_get_temp_units(hass))
@@ -111,7 +114,7 @@ def setup_platform(hass, config, add_entities, discovery_info=None):
         return False
 
     entities = [
-        HeaterMeterSensor(data_obj, sensor_type, host, entry_id)
+        HeaterMeterSensor(data_obj, sensor_type, host, name, entry_id)
         for sensor_type in SENSOR_TYPES
     ]
     add_entities(entities)
@@ -156,13 +159,17 @@ class HeaterMeterSensor(Entity):
         data: HeaterMeterData,
         sensor_type: str,
         host: str,
+        instance_name: str,
         entry_id: str,
     ) -> None:
         self.data = data
         self.type = sensor_type
         self._host = host
         self._entry_id = entry_id
-        self.entity_id = ENTITY_ID_FORMAT.format(sensor_type)
+        self._instance_name = instance_name
+        self.entity_id = ENTITY_ID_FORMAT.format(
+            f"{slugify(instance_name)}_{sensor_type}"
+        )
         self._name = SENSOR_TYPES[self.type][0]
         self._unit_of_measurement = SENSOR_TYPES[self.type][1]
         self._icon = SENSOR_TYPES[self.type][2]
@@ -178,7 +185,7 @@ class HeaterMeterSensor(Entity):
     def device_info(self) -> DeviceInfo:
         return DeviceInfo(
             identifiers={(DOMAIN, self._host)},
-            name=f"HeaterMeter ({self._host})",
+            name=self._instance_name,
             manufacturer="CapnBry",
             model="HeaterMeter BBQ Controller",
             configuration_url=f"http://{self._host}",

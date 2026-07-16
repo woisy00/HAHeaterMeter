@@ -16,7 +16,13 @@ import homeassistant.helpers.config_validation as cv
 import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_API_KEY, CONF_HOST, CONF_PORT, CONF_SCAN_INTERVAL
+from homeassistant.const import (
+    CONF_API_KEY,
+    CONF_HOST,
+    CONF_NAME,
+    CONF_PORT,
+    CONF_SCAN_INTERVAL,
+)
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers.typing import ConfigType
 
@@ -32,6 +38,7 @@ CONFIG_SCHEMA = vol.Schema(
             {
                 vol.Required(CONF_HOST): cv.string,
                 vol.Required(CONF_API_KEY): cv.string,
+                vol.Optional(CONF_NAME): cv.string,
                 vol.Optional(CONF_PORT, default=80): cv.positive_int,
                 vol.Optional(CONF_SCAN_INTERVAL, default=10): cv.positive_int,
             }
@@ -65,11 +72,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Merge entry data with any options (options override data for api_key / scan_interval)
     conf = {**entry.data, **entry.options}
 
+    name = str(conf.get(CONF_NAME, "")).strip() or conf[CONF_HOST]
+
     hass.data[DOMAIN][entry.entry_id] = {
         CONF_HOST: conf[CONF_HOST],
         CONF_PORT: conf.get(CONF_PORT, 80),
         CONF_API_KEY: conf[CONF_API_KEY],
         CONF_SCAN_INTERVAL: conf.get(CONF_SCAN_INTERVAL, 10),
+        CONF_NAME: name,
     }
 
     _LOGGER.debug("HeaterMeter async_setup_entry: data = %s", hass.data[DOMAIN][entry.entry_id])

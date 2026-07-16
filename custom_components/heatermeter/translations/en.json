@@ -7,6 +7,7 @@
         "data": {
           "host": "Host / IP address",
           "api_key": "API Key",
+          "name": "Device name",
           "port": "Port",
           "scan_interval": "Scan interval (seconds)"
         }
